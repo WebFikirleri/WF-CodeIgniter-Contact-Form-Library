@@ -9,6 +9,8 @@ class Contact_form
   	protected $ci;
   	protected $fields = array();
   	protected $form_id = false;
+  	protected $uploads = array();
+  	protected $upload_errors = '';
   	public $errors = false;
   	public $messages = false;
   	public $submit_text = 'Mesajımı Gönder';
@@ -113,12 +115,18 @@ class Contact_form
 
 	protected function _make_validation()
 	{
-		$this->ci->load->library('form_validation');
 
 		foreach ($this->fields as $field) {
-			if ($field['validation'] !== null)
-				$this->ci->form_validation->set_rules($field['name'], $field['title'], $field['validation']);
+			if ($field['validation'] !== null) {
+				if ($field['field_type'] == 'file' AND strpos($field['validation'], 'required')) {
+					$this->ci->form_validation->set_rules($field['name'], $field['title'], 'callback_check_file_upload_errors['.$field['name'].']');
+				} else {
+					$this->ci->form_validation->set_rules($field['name'], $field['title'], $field['validation']);
+				}
+			}
 		}
+
+		$this->_file_upload();
 
 		$result = $this->ci->form_validation->run();
 
@@ -128,7 +136,7 @@ class Contact_form
 	function _create_form($type = 'view')
 	{
 		$out = $this->form_prepend;
-		$out .= form_open(current_url(), array('class'=>'form-horizontal','id'=>$this->form_id));
+		$out .= form_open_multipart(current_url(), array('class'=>'form-horizontal','id'=>$this->form_id));
 
 		foreach ($this->fields as $key => $field) {
 			$err_class = (form_error($field['name'])) ? ' error' : '';
@@ -253,8 +261,13 @@ class Contact_form
 		$out = '<h3>'.$this->mail_title.'&nbsp;</h3><hr style="width:100%;height:1px;border-bottom:1px solid #FDFDFD;margin-bottom:16px;background:#F6F6F6;color:#F6F6F6;" />';
 		$out .= '<table width="100%" border="0" cellspacing="0" cellpadding="8"><tr> <th width="200" align="left" bgcolor="#F9F9F9">Form Alanı</th> <th width="8" align="center" bgcolor="#F9F9F9" class="nl">:</th> <th align="left" bgcolor="#F9F9F9">Alana Ait Değer</th> </tr>';
 		foreach ($this->fields as $key => $field) {
-			$vals = (is_array($this->ci->input->post($field['name'],true))) ? implode(', ', $this->ci->input->post($field['name'],true)) : set_value($field['name']);
-			$out .= '<tr><td align="left" valign="top" bgcolor="#FDFDFD">'.$field['title'].'&nbsp;</td><td align="center" valign="top" bgcolor="#FDFDFD" class="nl">:</td><td align="left" valign="top">'.$vals.'&nbsp;</td></tr>';
+			if ($field['field_type'] == 'file') {
+				$vals = (is_array($this->ci->input->post($field['name'],true))) ? implode(', ', $this->ci->input->post($field['name'],true)) : set_value($field['name']);
+				$out .= '<tr><td align="left" valign="top" bgcolor="#FDFDFD">'.$field['title'].'&nbsp;</td><td align="center" valign="top" bgcolor="#FDFDFD" class="nl">:</td><td align="left" valign="top">'.$_FILES[$field['name']]['name'].'&nbsp;<br><small><strong style="color:#c00">(dosya ektedir)</strong></small></td></tr>';
+			} else {
+				$vals = (is_array($this->ci->input->post($field['name'],true))) ? implode(', ', $this->ci->input->post($field['name'],true)) : set_value($field['name']);
+				$out .= '<tr><td align="left" valign="top" bgcolor="#FDFDFD">'.$field['title'].'&nbsp;</td><td align="center" valign="top" bgcolor="#FDFDFD" class="nl">:</td><td align="left" valign="top">'.$vals.'&nbsp;</td></tr>';
+			}
 		}
 		$out .= '</table>';
 		$out .= '<p style="color:#ccc"><small>'.$this->mail_subtitle.'&nbsp;</small></p>';
@@ -296,6 +309,43 @@ EOF;
 		return $out;
 	}
 
+	function check_file_upload_errors($str = '', $field = '')
+	{
+		if (isset($this->upload_errors) AND $this->upload_errors !== '') {
+			$this->ci->form_validation->set_message($this->upload_errors[$field]['name'], $this->upload_errors[$field]['error']);
+        	return false;
+		}
+		return true;
+	}
+
+	function _file_upload()
+	{
+		foreach ($this->fields as $key => $field) {
+			if ($field['field_type'] == 'file') {
+				$config['upload_path'] = './uploads/';
+				if (isset($field['field_values'])) {
+					$config['allowed_types'] = $field['field_values'];
+				} else {
+					$config['allowed_types'] = 'gif|jpg|png';
+				}
+				
+				$config['max_size']	= '5000';
+				$config['max_width']  = '4000';
+				$config['max_height']  = '4000';
+				$config['remove_spaces']  = true;
+
+				$this->ci->load->library('upload', $config);
+				if ($this->ci->upload->do_upload($field['name'])) {
+					$data = $this->ci->upload->data();
+					$this->uploads[]['full_path'] = $data['full_path'];
+				} else {
+					$this->upload_errors[$field['name']]['name'] = $field['name'];
+					$this->upload_errors[$field['name']]['error'] = $this->ci->upload->display_errors();
+				}
+			}
+		}
+	}
+
 	function _send_mail()
 	{
 		$this->ci->load->library('email');
@@ -304,7 +354,11 @@ EOF;
 		$this->ci->email->to($this->mail_to);
 
 		$this->ci->email->subject($this->mail_title);
-		$this->ci->email->message($this->_create_mail());	
+		$this->ci->email->message($this->_create_mail());
+
+		foreach ($this->uploads as $upload) {
+			$this->ci->email->attach($upload['full_path']);
+		}
 
 		if ($this->ci->email->send())
 			return true;
