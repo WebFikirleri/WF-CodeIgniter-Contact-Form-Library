@@ -23,3 +23,8 @@ WebFikirleri CodeIgniter Contact Form Library - Easy build Contact Forms
     $this->contact_form->field_type('message','textarea');
 
     $form = $this->contact_form->render();
+
+## Example File Upload
+
+    $this->contact_form->add_field('image_field','Image File','required');
+    $this->contact_form->field_type('image_field','file');
